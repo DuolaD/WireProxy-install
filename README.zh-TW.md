@@ -28,15 +28,35 @@
 
 ### 1. 下載並運行
 
-在 Linux 伺服器上使用 root 權限下載並執行：
+#### 普通用戶（推薦） / Normal User
+
+直接從 GitHub Releases 下載並運行最新穩定發行版：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DuolaD/WireProxy-install/main/wireproxy.sh -o wireproxy.sh
-chmod +x wireproxy.sh
-sudo ./wireproxy.sh
+bash <(wget -qO- https://github.com/DuolaD/WireProxy-install/releases/latest/download/wireproxy.sh)
 ```
 
-*(亦可複製/克隆本儲存庫後直接執行 `./wireproxy.sh`)*
+或者：
+
+```bash
+bash <(curl -Ls https://github.com/DuolaD/WireProxy-install/releases/latest/download/wireproxy.sh)
+```
+
+#### 開發用途 / Development
+
+直接從 GitHub 儲存庫原始碼區主分支獲取最新開發版：
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/DuolaD/WireProxy-install/main/wireproxy.sh)
+```
+
+或者：
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/DuolaD/WireProxy-install/main/wireproxy.sh)
+```
+
+*(亦可下載儲存到本地或克隆本儲存庫後執行：`chmod +x wireproxy.sh && sudo ./wireproxy.sh`)*
 
 ### 2. 互動式選單
 

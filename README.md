@@ -28,15 +28,35 @@ It turns WireGuard configuration files into lightweight, isolated **SOCKS5 and H
 
 ### 1. Download and Run
 
-On your Linux server, download and run the script with root privileges:
+#### Normal User (Recommended)
+
+Download and run the latest stable release directly from GitHub Releases:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DuolaD/WireProxy-install/main/wireproxy.sh -o wireproxy.sh
-chmod +x wireproxy.sh
-sudo ./wireproxy.sh
+bash <(wget -qO- https://github.com/DuolaD/WireProxy-install/releases/latest/download/wireproxy.sh)
 ```
 
-*(Alternatively, clone this repository and run `./wireproxy.sh` directly)*
+or:
+
+```bash
+bash <(curl -Ls https://github.com/DuolaD/WireProxy-install/releases/latest/download/wireproxy.sh)
+```
+
+#### Development
+
+Run the latest development script directly from the repository's main branch:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/DuolaD/WireProxy-install/main/wireproxy.sh)
+```
+
+or:
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/DuolaD/WireProxy-install/main/wireproxy.sh)
+```
+
+*(Alternatively, download/save locally or clone this repository and run: `chmod +x wireproxy.sh && sudo ./wireproxy.sh`)*
 
 ### 2. Interactive Menu
 

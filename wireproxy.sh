@@ -14,7 +14,7 @@
 set -o pipefail
 
 # ----------------------------- Global Settings --------------------------------
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="DuolaD_DEV"
 SCRIPT_AUTHOR="哆啦D夢|DuolaD"
 GITHUB_REPO="windtf/wireproxy"
 INSTALL_BIN="/usr/local/bin/wireproxy"

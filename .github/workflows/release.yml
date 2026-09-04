@@ -1,0 +1,46 @@
+name: Release Script Automation
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine Release Tag
+        id: get_tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ inputs.tag_name }}" ]; then
+            TAG="${{ inputs.tag_name }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "TAG_NAME=$TAG" >> $GITHUB_ENV
+          echo "Processing for release tag: $TAG"
+
+      - name: Update Version in wireproxy.sh
+        run: |
+          sed -i "s/^SCRIPT_VERSION=\".*\"/SCRIPT_VERSION=\"${TAG_NAME}\"/" wireproxy.sh
+          echo "Updated wireproxy.sh version:"
+          grep "SCRIPT_VERSION=" wireproxy.sh
+
+      - name: Upload wireproxy.sh to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${TAG_NAME}" wireproxy.sh --clobber
