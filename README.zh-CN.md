@@ -134,6 +134,10 @@ sudo ./wireproxy.sh logs proxy1
 sudo ./wireproxy.sh remove proxy1
 ```
 
+> [!TIP]
+> **交互选择**：执行 `test`、`start`、`stop`、`restart`、`status`、`logs`、`remove` 时，若未在命令行指定实例名（例如直接执行 `sudo ./wireproxy.sh restart`），脚本会自动列出所有已配置实例及其运行状态与端口，供你通过输入数字序号或名称快捷选择。
+
+
 ### 彻底卸载
 停止所有实例，删除 systemd 模板单元及二进制文件：
 ```bash

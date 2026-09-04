@@ -134,6 +134,10 @@ Stops the service, disables autostart, and cleans up configuration files:
 sudo ./wireproxy.sh remove proxy1
 ```
 
+> [!TIP]
+> **Interactive Selection**: When running `test`, `start`, `stop`, `restart`, `status`, `logs`, or `remove` without specifying an instance name (e.g. `sudo ./wireproxy.sh restart`), the script will automatically present a formatted list of all configured instances along with their status and ports, allowing you to quickly select one by entering its number or name.
+
+
 ### Complete Uninstall
 Stops all instances, removes systemd units and binary:
 ```bash

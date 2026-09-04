@@ -354,76 +354,184 @@ add_instance() {
     local http_user="$7"
     local http_pass="$8"
 
-    # Interactive prompts if required arguments are missing
-    if [[ -z "$name" ]]; then
-        echo -en "${COLOR_BOLD}Enter instance name (e.g. wg0, proxy1, us_vpn): ${COLOR_RESET}"
-        read -r input_name
-        name="$(sanitize_name "$input_name")"
-    else
-        name="$(sanitize_name "$name")"
-    fi
+    # Instance Name
+    local inst_conf=""
+    local inst_wg=""
+    while true; do
+        if [[ -z "$name" ]]; then
+            echo -en "${COLOR_BOLD}Enter instance name (e.g. wg0, proxy1, us_vpn): ${COLOR_RESET}"
+            read -r input_name
+            if [[ "$input_name" == "q" || "$input_name" == "Q" || "$input_name" == "exit" ]]; then
+                log_info "Operation cancelled."
+                return 1
+            fi
+            name="$(sanitize_name "$input_name")"
+        else
+            name="$(sanitize_name "$name")"
+        fi
 
-    if [[ -z "$name" ]]; then
-        log_err "Instance name cannot be empty."
-        return 1
-    fi
+        if [[ -z "$name" ]]; then
+            log_err "Instance name cannot be empty."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "Please enter a valid instance name."
+            name=""
+            continue
+        fi
 
-    local inst_conf="${CONF_DIR}/${name}.conf"
-    local inst_wg="${CONF_DIR}/${name}.wg.conf"
+        inst_conf="${CONF_DIR}/${name}.conf"
+        inst_wg="${CONF_DIR}/${name}.wg.conf"
 
-    if [[ -f "$inst_conf" ]]; then
-        log_err "Instance '${name}' already exists! Choose another name or remove it first."
-        return 1
-    fi
+        if [[ -f "$inst_conf" ]]; then
+            log_err "Instance '${name}' already exists! Choose another name or remove it first."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "Please choose a different name."
+            name=""
+            continue
+        fi
 
-    if [[ -z "$wg_conf" ]]; then
-        echo -en "${COLOR_BOLD}Enter full path to local WireGuard .conf file: ${COLOR_RESET}"
-        read -r wg_conf
-    fi
+        break
+    done
 
-    # Expand tilde or relative path
-    wg_conf="$(realpath "$wg_conf" 2>/dev/null || echo "$wg_conf")"
+    # WireGuard Configuration File
+    while true; do
+        if [[ -z "$wg_conf" ]]; then
+            echo -en "${COLOR_BOLD}Enter full path to local WireGuard .conf file: ${COLOR_RESET}"
+            read -r wg_conf
+        fi
 
-    if ! validate_wg_config "$wg_conf"; then
-        return 1
-    fi
+        # Allow user to abort
+        if [[ "$wg_conf" == "q" || "$wg_conf" == "Q" || "$wg_conf" == "exit" ]]; then
+            log_info "Operation cancelled."
+            return 1
+        fi
+
+        # Strip surrounding quotes if pasted
+        wg_conf="${wg_conf#\"}"
+        wg_conf="${wg_conf%\"}"
+        wg_conf="${wg_conf#\'}"
+        wg_conf="${wg_conf%\'}"
+
+        if [[ -z "$wg_conf" ]]; then
+            log_warn "File path cannot be empty. Please try again."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            continue
+        fi
+
+        # Expand tilde and resolve absolute path
+        local expanded_wg="${wg_conf/#\~/$HOME}"
+        local resolved_wg
+        resolved_wg="$(realpath "$expanded_wg" 2>/dev/null || readlink -f "$expanded_wg" 2>/dev/null || echo "$expanded_wg")"
+
+        if validate_wg_config "$resolved_wg"; then
+            wg_conf="$resolved_wg"
+            break
+        fi
+
+        if [[ ! -t 0 ]]; then
+            return 1
+        fi
+
+        log_warn "Please check the file path and try again (or enter 'q' to cancel)."
+        wg_conf=""
+    done
 
     # SOCKS5 Port
-    if [[ -z "$socks5_port" ]]; then
+    while true; do
         local suggested_socks5
         suggested_socks5="$(find_next_available_port "$DEFAULT_SOCKS5_BASE")"
-        echo -en "${COLOR_BOLD}Enter SOCKS5 port (bound to 127.0.0.1) [default: ${suggested_socks5}]: ${COLOR_RESET}"
-        read -r input_socks5
-        socks5_port="${input_socks5:-$suggested_socks5}"
-    fi
 
-    if is_port_in_use "$socks5_port"; then
-        log_err "Port $socks5_port is already in use on this machine."
-        return 1
-    fi
+        if [[ -z "$socks5_port" ]]; then
+            echo -en "${COLOR_BOLD}Enter SOCKS5 port (bound to 127.0.0.1) [default: ${suggested_socks5}]: ${COLOR_RESET}"
+            read -r input_socks5
+            if [[ "$input_socks5" == "q" || "$input_socks5" == "Q" || "$input_socks5" == "exit" ]]; then
+                log_info "Operation cancelled."
+                return 1
+            fi
+            socks5_port="${input_socks5:-$suggested_socks5}"
+        fi
+
+        # Validate port format and range
+        if ! [[ "$socks5_port" =~ ^[0-9]+$ ]] || (( socks5_port < 1 || socks5_port > 65535 )); then
+            log_err "Invalid port number: '${socks5_port}'. Port must be between 1 and 65535."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "Please try again (or enter 'q' to cancel)."
+            socks5_port=""
+            continue
+        fi
+
+        if is_port_in_use "$socks5_port"; then
+            log_err "Port $socks5_port is already in use on this machine."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "The specified SOCKS5 port is occupied. Please try another port (or enter 'q' to cancel)."
+            socks5_port=""
+            continue
+        fi
+
+        break
+    done
 
     # HTTP Port
-    if [[ -z "$http_port" ]]; then
+    while true; do
         local suggested_http
         # Ensure suggested http port is distinct from socks5 port
         suggested_http="$(find_next_available_port "$DEFAULT_HTTP_BASE")"
         if [[ "$suggested_http" -eq "$socks5_port" ]]; then
             suggested_http="$(find_next_available_port "$((suggested_http + 1))")"
         fi
-        echo -en "${COLOR_BOLD}Enter HTTP port (bound to 127.0.0.1) [default: ${suggested_http}]: ${COLOR_RESET}"
-        read -r input_http
-        http_port="${input_http:-$suggested_http}"
-    fi
 
-    if is_port_in_use "$http_port"; then
-        log_err "Port $http_port is already in use on this machine."
-        return 1
-    fi
+        if [[ -z "$http_port" ]]; then
+            echo -en "${COLOR_BOLD}Enter HTTP port (bound to 127.0.0.1) [default: ${suggested_http}]: ${COLOR_RESET}"
+            read -r input_http
+            if [[ "$input_http" == "q" || "$input_http" == "Q" || "$input_http" == "exit" ]]; then
+                log_info "Operation cancelled."
+                return 1
+            fi
+            http_port="${input_http:-$suggested_http}"
+        fi
 
-    if [[ "$socks5_port" -eq "$http_port" ]]; then
-        log_err "SOCKS5 port and HTTP port cannot be the same ($socks5_port)."
-        return 1
-    fi
+        # Validate port format and range
+        if ! [[ "$http_port" =~ ^[0-9]+$ ]] || (( http_port < 1 || http_port > 65535 )); then
+            log_err "Invalid port number: '${http_port}'. Port must be between 1 and 65535."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "Please try again (or enter 'q' to cancel)."
+            http_port=""
+            continue
+        fi
+
+        if [[ "$socks5_port" -eq "$http_port" ]]; then
+            log_err "SOCKS5 port and HTTP port cannot be the same ($socks5_port)."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "Please enter a different HTTP port (or enter 'q' to cancel)."
+            http_port=""
+            continue
+        fi
+
+        if is_port_in_use "$http_port"; then
+            log_err "Port $http_port is already in use on this machine."
+            if [[ ! -t 0 ]]; then
+                return 1
+            fi
+            log_warn "The specified HTTP port is occupied. Please try another port (or enter 'q' to cancel)."
+            http_port=""
+            continue
+        fi
+
+        break
+    done
 
     log_info "Creating instance: ${name}"
     mkdir -p "$CONF_DIR"
@@ -575,12 +683,118 @@ list_instances() {
     echo ""
 }
 
+select_instance() {
+    local _sel_out_var="$1"
+    local _sel_prompt_title="${2:-Select an instance}"
+
+    local _sel_configs=()
+    if [[ -d "$CONF_DIR" && -r "$CONF_DIR" ]]; then
+        shopt -s nullglob
+        _sel_configs=("${CONF_DIR}"/*.conf)
+        shopt -u nullglob
+    fi
+
+    local _sel_instance_names=()
+    local _sel_instance_confs=()
+    local _sel_c
+    for _sel_c in "${_sel_configs[@]}"; do
+        if [[ "$_sel_c" =~ \.wg\.conf$ ]]; then
+            continue
+        fi
+        _sel_instance_names+=("$(basename "$_sel_c" .conf)")
+        _sel_instance_confs+=("$_sel_c")
+    done
+
+    local _sel_count=${#_sel_instance_names[@]}
+    if [[ $_sel_count -eq 0 ]]; then
+        log_warn "No WireProxy instances found in ${CONF_DIR}."
+        log_info "Use option 2 (or 'wireproxy add') to add an instance first."
+        return 1
+    fi
+
+    echo -e "\n${COLOR_CYAN}--- ${_sel_prompt_title} ---${COLOR_RESET}"
+    printf "  %-4s %-16s %-12s %-22s %-22s\n" "#" "NAME" "STATUS" "SOCKS5 PROXY" "HTTP PROXY"
+    echo "  -----------------------------------------------------------------------------"
+
+    local _sel_i
+    for (( _sel_i=0; _sel_i<_sel_count; _sel_i++ )); do
+        local _sel_item_name="${_sel_instance_names[_sel_i]}"
+        local _sel_item_conf="${_sel_instance_confs[_sel_i]}"
+        local _sel_service="wireproxy@${_sel_item_name}.service"
+
+        local _sel_raw_status="inactive"
+        local _sel_colored_status="${COLOR_YELLOW}inactive${COLOR_RESET}"
+        if systemctl is-active --quiet "$_sel_service" 2>/dev/null; then
+            _sel_raw_status="active"
+            _sel_colored_status="${COLOR_GREEN}active${COLOR_RESET}"
+        elif systemctl is-failed --quiet "$_sel_service" 2>/dev/null; then
+            _sel_raw_status="failed"
+            _sel_colored_status="${COLOR_RED}failed${COLOR_RESET}"
+        fi
+
+        local _sel_socks5_port
+        _sel_socks5_port="$(format_endpoint "$(get_instance_port "$_sel_item_conf" "socks5")")"
+        local _sel_http_port
+        _sel_http_port="$(format_endpoint "$(get_instance_port "$_sel_item_conf" "http")")"
+
+        local _sel_vis_len=${#_sel_raw_status}
+        local _sel_pad=$((12 - _sel_vis_len))
+        local _sel_spaces=""
+        if (( _sel_pad > 0 )); then
+            _sel_spaces=$(printf '%*s' "$_sel_pad" '')
+        fi
+
+        printf "  %-4s %-16s %b%s %-22s %-22s\n" \
+            "$((_sel_i + 1)))" "$_sel_item_name" "$_sel_colored_status" "$_sel_spaces" "$_sel_socks5_port" "$_sel_http_port"
+    done
+    echo "  -----------------------------------------------------------------------------"
+    echo -e "  0)   Cancel"
+    echo ""
+
+    while true; do
+        echo -en "${COLOR_BOLD}Select an instance [1-${_sel_count}] (0 to cancel): ${COLOR_RESET}"
+        read -r _sel_choice
+
+        # User chooses to cancel
+        if [[ "$_sel_choice" == "0" || "$_sel_choice" == "q" || "$_sel_choice" == "Q" || "$_sel_choice" == "cancel" || "$_sel_choice" == "exit" ]]; then
+            log_info "Operation cancelled."
+            return 1
+        fi
+
+        # Check numeric selection
+        if [[ "$_sel_choice" =~ ^[0-9]+$ ]] && (( _sel_choice >= 1 && _sel_choice <= _sel_count )); then
+            local _sel_chosen="${_sel_instance_names[$((_sel_choice - 1))]}"
+            printf -v "$_sel_out_var" '%s' "$_sel_chosen"
+            return 0
+        fi
+
+        # Check direct instance name match
+        local _sel_match=""
+        for _sel_c in "${_sel_instance_names[@]}"; do
+            if [[ "$_sel_c" == "$_sel_choice" ]]; then
+                _sel_match="$_sel_c"
+                break
+            fi
+        done
+
+        if [[ -n "$_sel_match" ]]; then
+            printf -v "$_sel_out_var" '%s' "$_sel_match"
+            return 0
+        fi
+
+        log_warn "Invalid selection '${_sel_choice}'."
+        if [[ ! -t 0 ]]; then
+            return 1
+        fi
+        log_warn "Please enter a number between 1 and ${_sel_count} (or 0 to cancel)."
+    done
+}
+
 test_instance() {
     check_root
     local name="$1"
     if [[ -z "$name" ]]; then
-        echo -en "${COLOR_BOLD}Enter instance name to test: ${COLOR_RESET}"
-        read -r name
+        select_instance name "Select an instance to test" || return 0
     fi
 
     name="$(sanitize_name "$name")"
@@ -624,8 +838,7 @@ remove_instance() {
     check_root
     local name="$1"
     if [[ -z "$name" ]]; then
-        echo -en "${COLOR_BOLD}Enter instance name to remove: ${COLOR_RESET}"
-        read -r name
+        select_instance name "Select an instance to remove" || return 0
     fi
 
     name="$(sanitize_name "$name")"
@@ -661,12 +874,26 @@ control_service() {
     local name="$2"
 
     if [[ -z "$name" ]]; then
-        echo -en "${COLOR_BOLD}Enter instance name: ${COLOR_RESET}"
-        read -r name
+        local action_title="Select an instance to ${action}"
+        case "$action" in
+            logs)
+                action_title="Select an instance to view logs"
+                ;;
+            status)
+                action_title="Select an instance to view status"
+                ;;
+        esac
+        select_instance name "$action_title" || return 0
     fi
 
     name="$(sanitize_name "$name")"
+    local conf="${CONF_DIR}/${name}.conf"
     local service="wireproxy@${name}.service"
+
+    if [[ ! -f "$conf" ]]; then
+        log_err "Instance '${name}' does not exist."
+        return 1
+    fi
 
     case "$action" in
         start|stop|restart|status)
@@ -885,15 +1112,19 @@ Usage:
   $(basename "$0") install                  Install or update WireProxy binary & systemd template
   $(basename "$0") add [options]            Create a new WireProxy instance
   $(basename "$0") list                     List all configured instances and statuses
-  $(basename "$0") test <name>              Test SOCKS5/HTTP connectivity for an instance
-  $(basename "$0") start <name>             Start instance service
-  $(basename "$0") stop <name>              Stop instance service
-  $(basename "$0") restart <name>           Restart instance service
-  $(basename "$0") status <name>            View instance service status
-  $(basename "$0") logs <name>              View instance systemd logs
-  $(basename "$0") remove <name>            Remove an instance and delete its configs
+  $(basename "$0") test [name]              Test SOCKS5/HTTP connectivity for an instance
+  $(basename "$0") start [name]             Start instance service
+  $(basename "$0") stop [name]              Stop instance service
+  $(basename "$0") restart [name]           Restart instance service
+  $(basename "$0") status [name]            View instance service status
+  $(basename "$0") logs [name]              View instance systemd logs
+  $(basename "$0") remove [name]            Remove an instance and delete its configs
   $(basename "$0") uninstall                Uninstall WireProxy and clean up systemd units
   $(basename "$0") help                     Show this help message
+
+Note:
+  For commands taking [name], omitting the instance name in an interactive terminal
+  will display an interactive list of configured instances for you to choose from.
 
 Options for 'add' command:
   --name <name>               Instance identifier (e.g. wg0, us_vpn)
