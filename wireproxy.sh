@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # WireProxy One-Click Installer & Multi-Instance Manager for Linux
-# Repository: https://github.com/windtf/wireproxy
+# Author: 哆啦D夢|DuolaD
+# Repository: https://github.com/DuolaD/WireProxy-install
 #
 # Features:
 #   - Automated installation/update of WireProxy binary from GitHub releases
@@ -14,6 +15,7 @@ set -o pipefail
 
 # ----------------------------- Global Settings --------------------------------
 SCRIPT_VERSION="1.0.0"
+SCRIPT_AUTHOR="哆啦D夢|DuolaD"
 GITHUB_REPO="windtf/wireproxy"
 INSTALL_BIN="/usr/local/bin/wireproxy"
 CONF_DIR="/etc/wireproxy"
@@ -790,6 +792,130 @@ select_instance() {
     done
 }
 
+# ----------------------------- IP & Connectivity Helpers ----------------------
+
+# Query IP location (Country & City) via ip-api.com
+get_ip_location() {
+    local target_ip="$1"
+    local proxy_url="${2:-}"
+    local loc=""
+    if [[ -n "$target_ip" ]]; then
+        local lang_param=""
+        if [[ "${LANG:-}" =~ zh ]]; then
+            lang_param="?lang=zh-CN"
+        fi
+        if [[ -n "$proxy_url" ]]; then
+            loc="$(curl -fsSL -k --max-time 3 -x "$proxy_url" "http://ip-api.com/json/${target_ip}${lang_param}" 2>/dev/null | sed -n 's/.*"country":"\([^"]*\)".*"city":"\([^"]*\)".*/\1 \2/p' || true)"
+        fi
+        if [[ -z "$loc" ]]; then
+            loc="$(curl -fsSL -k --max-time 3 "http://ip-api.com/json/${target_ip}${lang_param}" 2>/dev/null | sed -n 's/.*"country":"\([^"]*\)".*"city":"\([^"]*\)".*/\1 \2/p' || true)"
+        fi
+        loc="$(echo "$loc" | tr -s ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        local c1 c2
+        c1="$(echo "$loc" | awk '{print $1}')"
+        c2="$(echo "$loc" | awk '{print $2}')"
+        if [[ -n "$c1" && "$c1" == "$c2" ]]; then
+            loc="$c1"
+        fi
+    fi
+    echo "$loc"
+}
+
+# Query public IP through a proxy with multi-API failover/fallback
+# Arguments:
+#   $1 - Proxy URL (e.g. "socks5h://127.0.0.1:10808" or "http://127.0.0.1:18080")
+#   $2 - IP version ("4" or "6")
+# Returns:
+#   Clean IP address on stdout, return code 0 on success, 1 on failure
+query_proxy_ip() {
+    local proxy_url="$1"
+    local ip_version="$2"
+    local -a api_list=()
+
+    if [[ "$ip_version" == "4" ]]; then
+        api_list=(
+            "https://api4.ipify.org"
+            "https://ipv4.icanhazip.com"
+            "https://checkip.amazonaws.com"
+            "https://v4.ident.me"
+        )
+    else
+        api_list=(
+            "https://api6.ipify.org"
+            "https://ipv6.icanhazip.com"
+            "https://api64.ipify.org"
+            "https://v6.ident.me"
+        )
+    fi
+
+    local api
+    for api in "${api_list[@]}"; do
+        local raw_ip
+        raw_ip="$(curl -fsSL -k --max-time 4 -x "$proxy_url" "$api" 2>/dev/null || true)"
+        raw_ip="$(echo "$raw_ip" | tr -d '[]' | tr -d '[:space:]')"
+
+        if [[ "$ip_version" == "4" ]]; then
+            if [[ "$raw_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "$raw_ip"
+                return 0
+            fi
+        else
+            if [[ "$raw_ip" =~ : && "$raw_ip" =~ ^[0-9a-fA-F:]+$ ]]; then
+                echo "$raw_ip"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+test_proxy_endpoint() {
+    local proxy_type="$1"
+    local endpoint="$2"
+    local proxy_url="$3"
+
+    log_info "Testing ${proxy_type} proxy on ${endpoint}..."
+
+    local v4="" v6="" v4_loc="" v6_loc=""
+    local v4_display="" v6_display=""
+
+    v4="$(query_proxy_ip "$proxy_url" "4" || true)"
+    if [[ -n "$v4" ]]; then
+        v4_loc="$(get_ip_location "$v4" "$proxy_url")"
+        if [[ -n "$v4_loc" ]]; then
+            v4_display="${COLOR_GREEN}${v4}${COLOR_RESET} (${v4_loc})"
+        else
+            v4_display="${COLOR_GREEN}${v4}${COLOR_RESET}"
+        fi
+    else
+        v4_display="${COLOR_YELLOW}None / Not reachable${COLOR_RESET}"
+    fi
+
+    v6="$(query_proxy_ip "$proxy_url" "6" || true)"
+    if [[ -n "$v6" ]]; then
+        v6_loc="$(get_ip_location "$v6" "$proxy_url")"
+        if [[ -n "$v6_loc" ]]; then
+            v6_display="${COLOR_GREEN}${v6}${COLOR_RESET} (${v6_loc})"
+        else
+            v6_display="${COLOR_GREEN}${v6}${COLOR_RESET}"
+        fi
+    else
+        v6_display="${COLOR_YELLOW}None / Not reachable${COLOR_RESET}"
+    fi
+
+    echo -e "  ├── IPv4 Exit IP: ${v4_display}"
+    echo -e "  └── IPv6 Exit IP: ${v6_display}"
+
+    if [[ -n "$v4" || -n "$v6" ]]; then
+        log_ok "${proxy_type} proxy is working properly!"
+        return 0
+    else
+        log_err "${proxy_type} connection test failed or timed out."
+        return 1
+    fi
+}
+
 test_instance() {
     check_root
     local name="$1"
@@ -804,6 +930,11 @@ test_instance() {
         return 1
     fi
 
+    local service="wireproxy@${name}.service"
+    if ! systemctl is-active --quiet "$service" 2>/dev/null; then
+        log_warn "Service '${service}' is not active. The connection test may fail."
+    fi
+
     local socks5_port
     socks5_port="$(get_instance_port "$conf" "socks5" | grep -oE '[0-9]+$' || true)"
     local http_port
@@ -811,26 +942,32 @@ test_instance() {
 
     log_info "Testing connectivity for instance '${name}'..."
 
+    local any_tested=0
+    local all_success=1
+
     if [[ -n "$socks5_port" ]]; then
-        log_info "Testing SOCKS5 proxy on 127.0.0.1:${socks5_port}..."
-        local s5_ip
-        s5_ip="$(curl -fsSL --max-time 8 -x "socks5h://127.0.0.1:${socks5_port}" "https://api.ipify.org" 2>/dev/null || true)"
-        if [[ -n "$s5_ip" ]]; then
-            log_ok "SOCKS5 Proxy Working! Exit IP: ${COLOR_BOLD}${s5_ip}${COLOR_RESET}"
-        else
-            log_err "SOCKS5 connection test failed or timed out."
+        any_tested=1
+        if ! test_proxy_endpoint "SOCKS5" "127.0.0.1:${socks5_port}" "socks5h://127.0.0.1:${socks5_port}"; then
+            all_success=0
         fi
     fi
 
     if [[ -n "$http_port" ]]; then
-        log_info "Testing HTTP proxy on 127.0.0.1:${http_port}..."
-        local http_ip
-        http_ip="$(curl -fsSL --max-time 8 -x "http://127.0.0.1:${http_port}" "https://api.ipify.org" 2>/dev/null || true)"
-        if [[ -n "$http_ip" ]]; then
-            log_ok "HTTP Proxy Working! Exit IP: ${COLOR_BOLD}${http_ip}${COLOR_RESET}"
-        else
-            log_err "HTTP connection test failed or timed out."
+        any_tested=1
+        if ! test_proxy_endpoint "HTTP" "127.0.0.1:${http_port}" "http://127.0.0.1:${http_port}"; then
+            all_success=0
         fi
+    fi
+
+    if [[ $any_tested -eq 0 ]]; then
+        log_warn "No SOCKS5 or HTTP proxy ports configured in '${conf}'."
+        return 1
+    fi
+
+    if [[ $all_success -eq 1 ]]; then
+        return 0
+    else
+        return 1
     fi
 }
 
@@ -955,8 +1092,8 @@ display_menu_header() {
     local divider="--------------------------------------------------------------------------"
 
     echo -e "${COLOR_CYAN}${border}${COLOR_RESET}"
-    echo -e "                 ${COLOR_BOLD}WireProxy Linux Multi-Instance Manager${COLOR_RESET}        "
-    echo -e "             Version: ${SCRIPT_VERSION} | Bound: 127.0.0.1 (Local Only)     "
+    echo -e "                  ${COLOR_BOLD}WireProxy Linux Multi-Instance Manager${COLOR_RESET}"
+    echo -e "   Version: ${SCRIPT_VERSION} | Author: ${COLOR_GREEN}${SCRIPT_AUTHOR}${COLOR_RESET} | Bound: 127.0.0.1 (Local Only)"
     echo -e "${COLOR_CYAN}${border}${COLOR_RESET}"
 
     # WireProxy Installation Status
@@ -1106,6 +1243,7 @@ interactive_menu() {
 print_help() {
     cat << EOF
 WireProxy Installer & Multi-Instance Manager v${SCRIPT_VERSION}
+Author: ${SCRIPT_AUTHOR}
 
 Usage:
   $(basename "$0")                          Launch interactive menu
@@ -1120,6 +1258,7 @@ Usage:
   $(basename "$0") logs [name]              View instance systemd logs
   $(basename "$0") remove [name]            Remove an instance and delete its configs
   $(basename "$0") uninstall                Uninstall WireProxy and clean up systemd units
+  $(basename "$0") version                  Show script version and author
   $(basename "$0") help                     Show this help message
 
 Note:
@@ -1240,6 +1379,10 @@ parse_cli_args() {
             ;;
         uninstall)
             uninstall_all
+            ;;
+        version|--version|-v)
+            echo "WireProxy Installer & Multi-Instance Manager v${SCRIPT_VERSION}"
+            echo "Author: ${SCRIPT_AUTHOR}"
             ;;
         help|--help|-h)
             print_help

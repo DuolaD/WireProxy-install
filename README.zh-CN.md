@@ -44,8 +44,8 @@ sudo ./wireproxy.sh
 
 ```text
 ==========================================================================
-                 WireProxy Linux Multi-Instance Manager        
-             Version: 1.0.0 | Bound: 127.0.0.1 (Local Only)     
+                  WireProxy Linux Multi-Instance Manager        
+   Version: 1.0.0 | Author: 哆啦D夢|DuolaD | Bound: 127.0.0.1 (Local Only)
 ==========================================================================
  WireProxy Status : Installed (v1.1.3)
  Configured Insts : 2 total
