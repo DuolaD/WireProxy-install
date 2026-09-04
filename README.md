@@ -43,10 +43,18 @@ sudo ./wireproxy.sh
 Running `./wireproxy.sh` without arguments launches an interactive interface:
 
 ```text
-======================================================
-       WireProxy Linux Multi-Instance Manager        
-       Version: 1.0.0 | Bound: 127.0.0.1 (Local Only)     
-======================================================
+==========================================================================
+                 WireProxy Linux Multi-Instance Manager        
+             Version: 1.0.0 | Bound: 127.0.0.1 (Local Only)     
+==========================================================================
+ WireProxy Status : Installed (v1.1.3)
+ Configured Insts : 2 total
+--------------------------------------------------------------------------
+   NAME            STATUS       SOCKS5 PROXY           HTTP PROXY            
+   ---------------------------------------------------------------------
+   wg0             active       127.0.0.1:10808        127.0.0.1:18080       
+   us_vpn          active       127.0.0.1:10810        127.0.0.1:18082       
+==========================================================================
  1) Install / Update WireProxy Binary
  2) Add New Instance from WireGuard Config
  3) List All Instances & Status
@@ -58,7 +66,7 @@ Running `./wireproxy.sh` without arguments launches an interactive interface:
  9) Remove an Instance
  10) Uninstall WireProxy & All Instances
  0) Exit
-======================================================
+==========================================================================
 ```
 
 ---

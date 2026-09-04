@@ -255,6 +255,57 @@ install_wireproxy_binary() {
     fi
 }
 
+get_wireproxy_version() {
+    local bin_path="$INSTALL_BIN"
+    if [[ ! -x "$bin_path" ]] && command -v wireproxy &>/dev/null; then
+        bin_path="$(command -v wireproxy)"
+    fi
+
+    if [[ -x "$bin_path" ]]; then
+        local ver_output
+        ver_output="$("$bin_path" --version 2>&1 || true)"
+        echo "$ver_output" | grep -ioE 'v?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?' | head -n 1 || true
+    fi
+}
+
+get_instance_port() {
+    local conf="$1"
+    local section="$2"
+    awk -v sec="$section" '
+        BEGIN { in_sec=0 }
+        /^\[.*\]/ {
+            curr = tolower($0)
+            gsub(/[][ \t\r]/, "", curr)
+            if (curr == tolower(sec)) {
+                in_sec = 1
+            } else {
+                in_sec = 0
+            }
+            next
+        }
+        in_sec && /^[ \t]*[Bb][Ii][Nn][Dd][Aa][Dd][Dd][Rr][Ee][Ss][Ss][ \t]*=/ {
+            sub(/^[^=]*=[ \t]*/, "")
+            sub(/[#;].*$/, "")
+            gsub(/[ \t\r\n]/, "")
+            print $0
+            exit
+        }
+    ' "$conf" 2>/dev/null
+}
+
+format_endpoint() {
+    local ep="$1"
+    if [[ -z "$ep" || "$ep" == "-" ]]; then
+        echo "-"
+    elif [[ "$ep" =~ ^[0-9]+$ ]]; then
+        echo "127.0.0.1:${ep}"
+    elif [[ "$ep" =~ ^:[0-9]+$ ]]; then
+        echo "127.0.0.1${ep}"
+    else
+        echo "$ep"
+    fi
+}
+
 # ----------------------------- Instance Management ----------------------------
 sanitize_name() {
     local raw_name="$1"
@@ -479,44 +530,47 @@ list_instances() {
     fi
 
     echo -e "\n${COLOR_BOLD}Configured WireProxy Instances:${COLOR_RESET}"
-    printf "%-18s %-12s %-20s %-20s %-10s\n" "NAME" "STATUS" "SOCKS5 (127.0.0.1)" "HTTP (127.0.0.1)" "UPTIME"
-    echo "-----------------------------------------------------------------------------------"
+    printf "%-16s %-12s %-22s %-22s %-10s\n" "NAME" "STATUS" "SOCKS5 (127.0.0.1)" "HTTP (127.0.0.1)" "UPTIME"
+    echo "-----------------------------------------------------------------------------------------"
 
     for conf in "${instance_configs[@]}"; do
         local name
         name="$(basename "$conf" .conf)"
         local service="wireproxy@${name}.service"
 
-        local status_str
+        local raw_status="inactive"
+        local colored_status="${COLOR_YELLOW}inactive${COLOR_RESET}"
         if systemctl is-active --quiet "$service" 2>/dev/null; then
-            status_str="${COLOR_GREEN}active${COLOR_RESET}"
+            raw_status="active"
+            colored_status="${COLOR_GREEN}active${COLOR_RESET}"
         elif systemctl is-failed --quiet "$service" 2>/dev/null; then
-            status_str="${COLOR_RED}failed${COLOR_RESET}"
-        else
-            status_str="${COLOR_YELLOW}inactive${COLOR_RESET}"
+            raw_status="failed"
+            colored_status="${COLOR_RED}failed${COLOR_RESET}"
         fi
 
         local socks5_port
-        socks5_port="$(grep -iE '^\s*BindAddress\s*=' "$conf" -A 0 | grep -oE '127\.0\.0\.1:[0-9]+' | head -n 1 | cut -d: -f2 || echo "N/A")"
+        socks5_port="$(format_endpoint "$(get_instance_port "$conf" "socks5")")"
         local http_port
-        http_port="$(grep -iE '^\s*BindAddress\s*=' "$conf" -A 0 | grep -oE '127\.0\.0\.1:[0-9]+' | tail -n 1 | cut -d: -f2 || echo "N/A")"
-
-        # If only one BindAddress exists, verify which section it belongs to
-        if [[ "$socks5_port" == "$http_port" ]]; then
-            http_port="N/A"
-        fi
+        http_port="$(format_endpoint "$(get_instance_port "$conf" "http")")"
 
         # Get service active enter timestamp / duration
         local uptime
         uptime="$(systemctl show "$service" --property=ActiveEnterTimestamp --value 2>/dev/null || echo "")"
-        if [[ -z "$uptime" || "$status_str" == *"inactive"* ]]; then
+        if [[ -z "$uptime" || "$raw_status" == "inactive" ]]; then
             uptime="-"
         else
             uptime="$(echo "$uptime" | awk '{print $2" "$3}' | cut -d: -f1,2)"
         fi
 
-        printf "%-18s %-21b %-20s %-20s %-10s\n" \
-            "$name" "$status_str" "127.0.0.1:${socks5_port}" "127.0.0.1:${http_port}" "$uptime"
+        local vis_len=${#raw_status}
+        local pad=$((12 - vis_len))
+        local spaces=""
+        if (( pad > 0 )); then
+            spaces=$(printf '%*s' "$pad" '')
+        fi
+
+        printf "%-16s %b%s %-22s %-22s %-10s\n" \
+            "$name" "$colored_status" "$spaces" "$socks5_port" "$http_port" "$uptime"
     done
     echo ""
 }
@@ -537,9 +591,9 @@ test_instance() {
     fi
 
     local socks5_port
-    socks5_port="$(grep -A 2 -iE '^\s*\[Socks5\]' "$conf" | grep -iE 'BindAddress' | grep -oE '[0-9]+$' || true)"
+    socks5_port="$(get_instance_port "$conf" "socks5" | grep -oE '[0-9]+$' || true)"
     local http_port
-    http_port="$(grep -A 2 -iE '^\s*\[http\]' "$conf" | grep -iE 'BindAddress' | grep -oE '[0-9]+$' || true)"
+    http_port="$(get_instance_port "$conf" "http" | grep -oE '[0-9]+$' || true)"
 
     log_info "Testing connectivity for instance '${name}'..."
 
@@ -669,13 +723,98 @@ uninstall_all() {
 }
 
 # ----------------------------- Interactive Menu -------------------------------
+display_menu_header() {
+    local border="=========================================================================="
+    local divider="--------------------------------------------------------------------------"
+
+    echo -e "${COLOR_CYAN}${border}${COLOR_RESET}"
+    echo -e "                 ${COLOR_BOLD}WireProxy Linux Multi-Instance Manager${COLOR_RESET}        "
+    echo -e "             Version: ${SCRIPT_VERSION} | Bound: 127.0.0.1 (Local Only)     "
+    echo -e "${COLOR_CYAN}${border}${COLOR_RESET}"
+
+    # WireProxy Installation Status
+    local bin_path="$INSTALL_BIN"
+    if [[ ! -x "$bin_path" ]] && command -v wireproxy &>/dev/null; then
+        bin_path="$(command -v wireproxy)"
+    fi
+
+    if [[ -x "$bin_path" ]]; then
+        local ver
+        ver="$(get_wireproxy_version)"
+        if [[ -n "$ver" ]]; then
+            if [[ "$ver" =~ ^[0-9] ]]; then
+                ver="v${ver}"
+            fi
+            echo -e " WireProxy Status : ${COLOR_GREEN}Installed${COLOR_RESET} (${COLOR_CYAN}${ver}${COLOR_RESET})"
+        else
+            echo -e " WireProxy Status : ${COLOR_GREEN}Installed${COLOR_RESET}"
+        fi
+    else
+        echo -e " WireProxy Status : ${COLOR_RED}Not Installed${COLOR_RESET}"
+    fi
+
+    # Configured Instances List & Proxy Ports
+    local configs=()
+    if [[ -d "$CONF_DIR" && -r "$CONF_DIR" ]]; then
+        shopt -s nullglob
+        configs=("${CONF_DIR}"/*.conf)
+        shopt -u nullglob
+    fi
+
+    local instance_configs=()
+    for conf in "${configs[@]}"; do
+        if [[ "$conf" =~ \.wg\.conf$ ]]; then
+            continue
+        fi
+        instance_configs+=("$conf")
+    done
+
+    if [[ ${#instance_configs[@]} -eq 0 ]]; then
+        echo -e " Configured Insts : ${COLOR_YELLOW}None${COLOR_RESET} (Use option 2 to add an instance)"
+    else
+        echo -e " Configured Insts : ${COLOR_BOLD}${#instance_configs[@]} total${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}${divider}${COLOR_RESET}"
+        printf "   ${COLOR_BOLD}%-15s %-12s %-22s %-22s${COLOR_RESET}\n" "NAME" "STATUS" "SOCKS5 PROXY" "HTTP PROXY"
+        echo -e "   ---------------------------------------------------------------------"
+
+        for conf in "${instance_configs[@]}"; do
+            local name
+            name="$(basename "$conf" .conf)"
+            local service="wireproxy@${name}.service"
+
+            local raw_status="inactive"
+            local colored_status="${COLOR_YELLOW}inactive${COLOR_RESET}"
+            if systemctl is-active --quiet "$service" 2>/dev/null; then
+                raw_status="active"
+                colored_status="${COLOR_GREEN}active${COLOR_RESET}"
+            elif systemctl is-failed --quiet "$service" 2>/dev/null; then
+                raw_status="failed"
+                colored_status="${COLOR_RED}failed${COLOR_RESET}"
+            fi
+
+            local s5_ep
+            s5_ep="$(format_endpoint "$(get_instance_port "$conf" "socks5")")"
+            local http_ep
+            http_ep="$(format_endpoint "$(get_instance_port "$conf" "http")")"
+
+            local vis_len=${#raw_status}
+            local pad=$((12 - vis_len))
+            local spaces=""
+            if (( pad > 0 )); then
+                spaces=$(printf '%*s' "$pad" '')
+            fi
+
+            printf "   %-15s %b%s %-22s %-22s\n" "$name" "$colored_status" "$spaces" "$s5_ep" "$http_ep"
+        done
+    fi
+
+    echo -e "${COLOR_CYAN}${border}${COLOR_RESET}"
+}
+
 interactive_menu() {
     while true; do
         clear
-        echo -e "${COLOR_CYAN}======================================================${COLOR_RESET}"
-        echo -e "       ${COLOR_BOLD}WireProxy Linux Multi-Instance Manager${COLOR_RESET}        "
-        echo -e "       Version: ${SCRIPT_VERSION} | Bound: 127.0.0.1 (Local Only)     "
-        echo -e "${COLOR_CYAN}======================================================${COLOR_RESET}"
+        display_menu_header
         echo -e " 1) Install / Update WireProxy Binary"
         echo -e " 2) Add New Instance from WireGuard Config"
         echo -e " 3) List All Instances & Status"
@@ -687,7 +826,7 @@ interactive_menu() {
         echo -e " 9) Remove an Instance"
         echo -e " 10) Uninstall WireProxy & All Instances"
         echo -e " 0) Exit"
-        echo -e "${COLOR_CYAN}======================================================${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}==========================================================================${COLOR_RESET}"
         echo -en "${COLOR_BOLD}Select an option [0-10]: ${COLOR_RESET}"
         read -r choice
 
