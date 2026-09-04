@@ -1,10 +1,16 @@
+<div align="center">
+
 # WireProxy-install
 
 An automated installer and multi-instance manager for [WireProxy](https://github.com/windtf/wireproxy) on Linux servers.
 
-It turns WireGuard configuration files into lightweight, isolated **SOCKS5 and HTTP proxy instances** running in pure userspace. All proxies are **strictly bound to `127.0.0.1` (loopback only)**, guaranteeing that external machines cannot access or scan your proxy ports.
+**English** • [简体中文](README.zh-CN.md) • [繁體中文](README.zh-TW.md)
+
+</div>
 
 ---
+
+It turns WireGuard configuration files into lightweight, isolated **SOCKS5 and HTTP proxy instances** running in pure userspace. All proxies are **strictly bound to `127.0.0.1` (loopback only)**, guaranteeing that external machines cannot access or scan your proxy ports.
 
 ## Features
 
@@ -109,10 +115,8 @@ sudo ./wireproxy.sh start proxy1
 sudo ./wireproxy.sh stop proxy1
 sudo ./wireproxy.sh restart proxy1
 
-# Service status
+# Service status & real-time logs
 sudo ./wireproxy.sh status proxy1
-
-# Real-time logs
 sudo ./wireproxy.sh logs proxy1
 ```
 
@@ -132,7 +136,7 @@ sudo ./wireproxy.sh uninstall
 
 ## Using the Local Proxies
 
-Since the proxies listen strictly on `127.0.0.1`, you can consume them locally from any tool or language:
+Since the proxies listen strictly on `127.0.0.1`, you can consume them locally from any tool:
 
 ### Curl
 ```bash
@@ -178,5 +182,5 @@ print(resp.text)
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE).  
 WireProxy is licensed under the [ISC License](https://github.com/windtf/wireproxy/blob/main/LICENSE).
